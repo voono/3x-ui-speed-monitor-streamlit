@@ -1,0 +1,6 @@
+panel_credentials.json
+panels.json
+app_settings.json
+xui_speed_history.db
+xui_speed_history.db-*
+__pycache__/

@@ -1,0 +1,13 @@
+[
+  {
+    "name": "Local panel",
+    "base_url": "http://localhost:2053/randompath",
+    "username": "admin",
+    "password": "your-password",
+    "two_factor_code": "",
+    "sample_seconds": 2,
+    "timeout": 15,
+    "high_usage_mibps": 50,
+    "insecure": false
+  }
+]
