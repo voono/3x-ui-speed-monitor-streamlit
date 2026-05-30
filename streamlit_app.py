@@ -33,6 +33,17 @@ COOKIE_NAME = "xui_speed_monitor_auth"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
 
+def hide_page_navigation() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebarNav"] { display: none; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def load_json_file(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -462,19 +473,28 @@ def render_speed_chart(history: list[dict[str, Any]], panel: dict[str, Any]) -> 
     st.altair_chart(chart.properties(height=260), use_container_width=True)
 
 
-def render_panel_card(panel: dict[str, Any], index: int, panels: list[dict[str, Any]]) -> None:
+def render_panel_card(
+    panel: dict[str, Any],
+    index: int,
+    panels: list[dict[str, Any]],
+    *,
+    admin: bool,
+) -> None:
     pid = panel_id(panel)
     name = panel.get("name") or f"Panel {index + 1}"
     latest = latest_reading(panel, db_path=DB_FILE)
     history = recent_readings(panel, limit=HISTORY_LIMIT, db_path=DB_FILE)
 
     with st.container(border=True):
-        header_left, header_right = st.columns([3, 1])
-        header_left.subheader(name)
-        if header_right.button("Refresh", key=f"refresh_{pid}", use_container_width=True):
-            with st.spinner(f"Checking {name}..."):
-                record_speed(panel)
-            st.rerun()
+        if admin:
+            header_left, header_right = st.columns([3, 1])
+            header_left.subheader(name)
+            if header_right.button("Refresh", key=f"refresh_{pid}", use_container_width=True):
+                with st.spinner(f"Checking {name}..."):
+                    record_speed(panel)
+                st.rerun()
+        else:
+            st.subheader(name)
 
         if latest and latest["ok"]:
             col1, col2, col3 = st.columns([1, 1, 1])
@@ -484,27 +504,34 @@ def render_panel_card(panel: dict[str, Any], index: int, panels: list[dict[str, 
         elif latest:
             st.error(latest["error"])
         else:
-            st.caption("No collected data yet. Start collector.py or click Refresh.")
+            st.caption("No collected data yet.")
 
         render_overuse_warning(latest, panel)
         render_speed_chart(history, panel)
 
-        save_panel_editor(panel, index, panels)
+        if admin:
+            save_panel_editor(panel, index, panels)
 
 
-def render_dashboard(panels: list[dict[str, Any]], auto_refresh: bool, refresh_seconds: int) -> None:
+def render_dashboard(
+    panels: list[dict[str, Any]],
+    auto_refresh: bool,
+    refresh_seconds: int,
+    *,
+    admin: bool,
+) -> None:
     run_every = f"{refresh_seconds}s" if auto_refresh else None
 
     @st.fragment(run_every=run_every)
     def live_panels() -> None:
         for index, panel in enumerate(panels):
-            render_panel_card(panel, index, panels)
+            render_panel_card(panel, index, panels, admin=admin)
 
     live_panels()
 
 
-def main() -> None:
-    st.set_page_config(page_title="3X-UI Speed Monitor", layout="wide")
+def render_admin_page() -> None:
+    hide_page_navigation()
     if not require_login():
         return
 
@@ -536,7 +563,23 @@ def main() -> None:
         st.info("Add a panel from the sidebar.")
         return
 
-    render_dashboard(panels, auto_refresh, int(refresh_seconds))
+    render_dashboard(panels, auto_refresh, int(refresh_seconds), admin=True)
+
+
+def main() -> None:
+    st.set_page_config(page_title="3X-UI Speed Monitor", layout="wide")
+    hide_page_navigation()
+    init_db(DB_FILE)
+    panels = load_panels()
+
+    st.title("3X-UI Speed Monitor")
+    st.caption("Live network usage")
+
+    if not panels:
+        st.info("No panels available.")
+        return
+
+    render_dashboard(panels, auto_refresh=True, refresh_seconds=30, admin=False)
 
 
 if __name__ == "__main__":
