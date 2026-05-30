@@ -1,9 +1,9 @@
 import streamlit as st
 
-from streamlit_app import render_admin_page
+from streamlit_app import get_site_title, render_admin_page
 
 
-st.set_page_config(page_title="3X-UI Admin", layout="wide")
+st.set_page_config(page_title=f"{get_site_title()} Admin", layout="wide")
 st.markdown(
     """
     <style>

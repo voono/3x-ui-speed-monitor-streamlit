@@ -31,6 +31,12 @@ HISTORY_LIMIT = 120
 HASH_ITERATIONS = 390_000
 COOKIE_NAME = "xui_speed_monitor_auth"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+DEFAULT_SITE_TITLE = "3X-UI Speed Monitor"
+DEFAULT_PUBLIC_DISPLAY = {
+    "show_upload": True,
+    "show_download": True,
+    "show_limit_line": True,
+}
 
 
 def hide_page_navigation() -> None:
@@ -38,6 +44,18 @@ def hide_page_navigation() -> None:
         """
         <style>
         [data-testid="stSidebarNav"] { display: none; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def hide_public_sidebar() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"] { display: none; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -80,6 +98,30 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(settings, dict):
         return {}
     return settings
+
+
+def get_site_title() -> str:
+    if not SETTINGS_FILE.exists():
+        return DEFAULT_SITE_TITLE
+
+    try:
+        settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_SITE_TITLE
+
+    if not isinstance(settings, dict):
+        return DEFAULT_SITE_TITLE
+
+    title = str(settings.get("site_title") or "").strip()
+    return title or DEFAULT_SITE_TITLE
+
+
+def get_public_display() -> dict[str, bool]:
+    settings = load_settings()
+    return {
+        key: bool(settings.get(key, default))
+        for key, default in DEFAULT_PUBLIC_DISPLAY.items()
+    }
 
 
 def save_settings(settings: dict[str, Any]) -> None:
@@ -209,7 +251,7 @@ def require_login() -> bool:
                 st.stop()
         return True
 
-    st.title("3X-UI Speed Monitor")
+    st.title(get_site_title())
 
     if not has_password:
         st.subheader("Create Web Password")
@@ -225,12 +267,14 @@ def require_login() -> bool:
                 st.error("Passwords do not match.")
             else:
                 hashed = hash_password(password)
-                settings = {
-                    "password_salt": hashed["salt"],
-                    "password_hash": hashed["hash"],
-                    "password_iterations": hashed["iterations"],
-                    "cookie_secret": secrets.token_hex(32),
-                }
+                settings.update(
+                    {
+                        "password_salt": hashed["salt"],
+                        "password_hash": hashed["hash"],
+                        "password_iterations": hashed["iterations"],
+                        "cookie_secret": secrets.token_hex(32),
+                    }
+                )
                 save_settings(settings)
                 st.session_state["authenticated"] = True
                 st.session_state["auth_cookie_to_set"] = sign_login_cookie(settings)
@@ -333,6 +377,37 @@ def add_panel_form(panels: list[dict[str, Any]]) -> None:
     st.rerun()
 
 
+def site_settings_form() -> None:
+    display = get_public_display()
+    with st.sidebar.expander("Site settings"):
+        with st.form("site_settings"):
+            title = st.text_input("Site title", value=get_site_title(), max_chars=100)
+            st.caption("Public dashboard")
+            show_upload = st.checkbox("Show upload", value=display["show_upload"])
+            show_download = st.checkbox("Show download", value=display["show_download"])
+            show_limit_line = st.checkbox(
+                "Show high-usage line",
+                value=display["show_limit_line"],
+            )
+            submitted = st.form_submit_button("Save", use_container_width=True)
+
+    if not submitted:
+        return
+
+    title = title.strip()
+    if not title:
+        st.sidebar.error("Site title is required.")
+        return
+
+    settings = load_settings()
+    settings["site_title"] = title
+    settings["show_upload"] = show_upload
+    settings["show_download"] = show_download
+    settings["show_limit_line"] = show_limit_line
+    save_settings(settings)
+    st.rerun()
+
+
 def save_panel_editor(panel: dict[str, Any], index: int, panels: list[dict[str, Any]]) -> None:
     with st.expander("Settings"):
         panel["name"] = st.text_input("Name", value=panel.get("name", ""), key=f"name_{index}")
@@ -405,9 +480,16 @@ def save_panel_editor(panel: dict[str, Any], index: int, panels: list[dict[str, 
             st.rerun()
 
 
-def render_overuse_warning(latest: dict[str, Any] | None, panel: dict[str, Any]) -> None:
+def render_overuse_warning(
+    latest: dict[str, Any] | None,
+    panel: dict[str, Any],
+    *,
+    show_upload: bool,
+    show_download: bool,
+    show_limit_line: bool,
+) -> None:
     threshold_mibps = high_usage_mibps(panel)
-    if not latest or not latest["ok"] or threshold_mibps <= 0:
+    if not latest or not latest["ok"] or threshold_mibps <= 0 or not show_limit_line:
         return
 
     threshold_bps = threshold_mibps * 1024 * 1024
@@ -415,9 +497,9 @@ def render_overuse_warning(latest: dict[str, Any] | None, panel: dict[str, Any])
     upload_bps = latest["upload_bps"] or 0
     download_bps = latest["download_bps"] or 0
 
-    if upload_bps > threshold_bps:
+    if show_upload and upload_bps > threshold_bps:
         overuses.append(f"upload {format_rate(upload_bps)}")
-    if download_bps > threshold_bps:
+    if show_download and download_bps > threshold_bps:
         overuses.append(f"download {format_rate(download_bps)}")
 
     if overuses:
@@ -428,9 +510,22 @@ def render_overuse_warning(latest: dict[str, Any] | None, panel: dict[str, Any])
         )
 
 
-def render_speed_chart(history: list[dict[str, Any]], panel: dict[str, Any]) -> None:
+def render_speed_chart(
+    history: list[dict[str, Any]],
+    panel: dict[str, Any],
+    *,
+    show_upload: bool,
+    show_download: bool,
+    show_limit_line: bool,
+) -> None:
+    visible_series: list[str] = []
+    if show_upload:
+        visible_series.append("upload MiB/s")
+    if show_download:
+        visible_series.append("download MiB/s")
+
     if not history:
-        st.line_chart(pd.DataFrame(columns=["time", "upload MiB/s", "download MiB/s"]))
+        st.line_chart(pd.DataFrame(columns=["time", *visible_series]))
         return
 
     frame = pd.DataFrame(
@@ -444,7 +539,7 @@ def render_speed_chart(history: list[dict[str, Any]], panel: dict[str, Any]) -> 
     )
     long_frame = frame.melt(
         id_vars=["time"],
-        value_vars=["upload MiB/s", "download MiB/s"],
+        value_vars=visible_series,
         var_name="direction",
         value_name="MiB/s",
     )
@@ -460,7 +555,7 @@ def render_speed_chart(history: list[dict[str, Any]], panel: dict[str, Any]) -> 
     )
 
     threshold_mibps = high_usage_mibps(panel)
-    if threshold_mibps > 0:
+    if threshold_mibps > 0 and show_limit_line:
         threshold = alt.Chart(pd.DataFrame({"threshold": [threshold_mibps]})).mark_rule(
             color="#d62728",
             strokeDash=[6, 4],
@@ -484,6 +579,7 @@ def render_panel_card(
     name = panel.get("name") or f"Panel {index + 1}"
     latest = latest_reading(panel, db_path=DB_FILE)
     history = recent_readings(panel, limit=HISTORY_LIMIT, db_path=DB_FILE)
+    display = DEFAULT_PUBLIC_DISPLAY if admin else get_public_display()
 
     with st.container(border=True):
         if admin:
@@ -497,17 +593,22 @@ def render_panel_card(
             st.subheader(name)
 
         if latest and latest["ok"]:
-            col1, col2, col3 = st.columns([1, 1, 1])
-            col1.metric("Upload", format_rate(latest["upload_bps"] or 0))
-            col2.metric("Download", format_rate(latest["download_bps"] or 0))
-            col3.metric("Checked", latest["checked_at"].split("T")[-1])
+            metric_items: list[tuple[str, str]] = []
+            if display["show_upload"]:
+                metric_items.append(("Upload", format_rate(latest["upload_bps"] or 0)))
+            if display["show_download"]:
+                metric_items.append(("Download", format_rate(latest["download_bps"] or 0)))
+            metric_items.append(("Checked", latest["checked_at"].split("T")[-1]))
+            columns = st.columns(len(metric_items))
+            for column, (label, value) in zip(columns, metric_items):
+                column.metric(label, value)
         elif latest:
-            st.error(latest["error"])
+            st.error(latest["error"] if admin else "Data temporarily unavailable.")
         else:
             st.caption("No collected data yet.")
 
-        render_overuse_warning(latest, panel)
-        render_speed_chart(history, panel)
+        render_overuse_warning(latest, panel, **display)
+        render_speed_chart(history, panel, **display)
 
         if admin:
             save_panel_editor(panel, index, panels)
@@ -538,9 +639,10 @@ def render_admin_page() -> None:
     init_db(DB_FILE)
     panels = load_panels()
 
-    st.title("3X-UI Speed Monitor")
+    st.title(get_site_title())
     st.caption(f"{len(panels)} saved panel{'s' if len(panels) != 1 else ''}")
 
+    site_settings_form()
     add_panel_form(panels)
 
     with st.sidebar:
@@ -567,12 +669,13 @@ def render_admin_page() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="3X-UI Speed Monitor", layout="wide")
+    st.set_page_config(page_title=get_site_title(), layout="wide")
     hide_page_navigation()
+    hide_public_sidebar()
     init_db(DB_FILE)
     panels = load_panels()
 
-    st.title("3X-UI Speed Monitor")
+    st.title(get_site_title())
     st.caption("Live network usage")
 
     if not panels:
