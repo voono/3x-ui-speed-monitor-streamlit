@@ -1,2 +1,12 @@
 [client]
 showSidebarNavigation = false
+toolbarMode = "minimal"
+showErrorDetails = "none"
+
+[server]
+enableCORS = true
+enableXsrfProtection = true
+corsAllowedOrigins = ["https://stats.example.com"]
+
+[browser]
+serverAddress = "stats.example.com"
