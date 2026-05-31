@@ -156,7 +156,9 @@ class ThreeXUIClient:
             detail = exc.read().decode("utf-8", errors="replace")
             redirect = exc.headers.get("Location")
             location = f" Location: {redirect}" if redirect else ""
-            if exc.code in (401, 403):
+            if exc.code in (401, 403) or (
+                exc.code == 404 and path == "/panel/api/server/status"
+            ):
                 raise ThreeXUIAuthError(
                     f"HTTP {exc.code} from {path}:{location} {detail}"
                 ) from exc

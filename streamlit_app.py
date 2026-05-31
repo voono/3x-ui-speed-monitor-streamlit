@@ -27,11 +27,11 @@ from xui_speed_store import (
 
 PANELS_FILE = Path(os.environ.get("PANELS_FILE", "panels.json"))
 SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE", "app_settings.json"))
-HISTORY_LIMIT = 120
 HASH_ITERATIONS = 390_000
 COOKIE_NAME = "xui_speed_monitor_auth"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 DEFAULT_SITE_TITLE = "3X-UI Speed Monitor"
+CHART_PERIODS = ["3h", "6h", "12h", "24h"]
 DEFAULT_PUBLIC_DISPLAY = {
     "show_upload": True,
     "show_download": True,
@@ -321,6 +321,16 @@ def high_usage_mibps(panel: dict[str, Any]) -> float:
     return max(float(panel.get("high_usage_mibps") or 0), 0.0)
 
 
+def chart_period_selector(key: str) -> int:
+    selected = st.segmented_control(
+        "Chart period",
+        options=CHART_PERIODS,
+        default="6h",
+        key=key,
+    )
+    return int((selected or "6h").removesuffix("h"))
+
+
 def record_speed(panel: dict[str, Any]) -> None:
     checked_at = datetime.now().isoformat(timespec="seconds")
 
@@ -525,7 +535,12 @@ def render_speed_chart(
         visible_series.append("download MiB/s")
 
     if not history:
-        st.line_chart(pd.DataFrame(columns=["time", *visible_series]))
+        st.caption("No chart data for the selected period.")
+        return
+
+    threshold_mibps = high_usage_mibps(panel)
+    if not visible_series and not (threshold_mibps > 0 and show_limit_line):
+        st.caption("Chart hidden by public display settings.")
         return
 
     frame = pd.DataFrame(
@@ -537,35 +552,34 @@ def render_speed_chart(
             ],
         }
     )
-    long_frame = frame.melt(
-        id_vars=["time"],
-        value_vars=visible_series,
-        var_name="direction",
-        value_name="MiB/s",
-    )
-
-    line_chart = (
-        alt.Chart(long_frame)
-        .mark_line()
-        .encode(
-            x=alt.X("time:T", title=None),
-            y=alt.Y("MiB/s:Q", title="MiB/s"),
-            color=alt.Color("direction:N", title=None),
+    chart = None
+    if visible_series:
+        long_frame = frame.melt(
+            id_vars=["time"],
+            value_vars=visible_series,
+            var_name="direction",
+            value_name="MiB/s",
         )
-    )
+        chart = (
+            alt.Chart(long_frame)
+            .mark_line()
+            .encode(
+                x=alt.X("time:T", title=None),
+                y=alt.Y("MiB/s:Q", title="MiB/s"),
+                color=alt.Color("direction:N", title=None),
+            )
+        )
 
-    threshold_mibps = high_usage_mibps(panel)
     if threshold_mibps > 0 and show_limit_line:
         threshold = alt.Chart(pd.DataFrame({"threshold": [threshold_mibps]})).mark_rule(
             color="#d62728",
             strokeDash=[6, 4],
         ).encode(y="threshold:Q")
-        chart = line_chart + threshold
+        chart = threshold if chart is None else chart + threshold
         st.caption(f"High usage line: {threshold_mibps:g} MiB/s")
-    else:
-        chart = line_chart
 
-    st.altair_chart(chart.properties(height=260), use_container_width=True)
+    if chart is not None:
+        st.altair_chart(chart.properties(height=260), use_container_width=True)
 
 
 def render_panel_card(
@@ -574,11 +588,12 @@ def render_panel_card(
     panels: list[dict[str, Any]],
     *,
     admin: bool,
+    chart_hours: int,
 ) -> None:
     pid = panel_id(panel)
     name = panel.get("name") or f"Panel {index + 1}"
     latest = latest_reading(panel, db_path=DB_FILE)
-    history = recent_readings(panel, limit=HISTORY_LIMIT, db_path=DB_FILE)
+    history = recent_readings(panel, hours=chart_hours, db_path=DB_FILE)
     display = DEFAULT_PUBLIC_DISPLAY if admin else get_public_display()
 
     with st.container(border=True):
@@ -620,13 +635,20 @@ def render_dashboard(
     refresh_seconds: int,
     *,
     admin: bool,
+    chart_hours: int,
 ) -> None:
     run_every = f"{refresh_seconds}s" if auto_refresh else None
 
     @st.fragment(run_every=run_every)
     def live_panels() -> None:
         for index, panel in enumerate(panels):
-            render_panel_card(panel, index, panels, admin=admin)
+            render_panel_card(
+                panel,
+                index,
+                panels,
+                admin=admin,
+                chart_hours=chart_hours,
+            )
 
     live_panels()
 
@@ -641,6 +663,7 @@ def render_admin_page() -> None:
 
     st.title(get_site_title())
     st.caption(f"{len(panels)} saved panel{'s' if len(panels) != 1 else ''}")
+    chart_hours = chart_period_selector("admin_chart_period")
 
     site_settings_form()
     add_panel_form(panels)
@@ -665,7 +688,13 @@ def render_admin_page() -> None:
         st.info("Add a panel from the sidebar.")
         return
 
-    render_dashboard(panels, auto_refresh, int(refresh_seconds), admin=True)
+    render_dashboard(
+        panels,
+        auto_refresh,
+        int(refresh_seconds),
+        admin=True,
+        chart_hours=chart_hours,
+    )
 
 
 def main() -> None:
@@ -677,12 +706,19 @@ def main() -> None:
 
     st.title(get_site_title())
     st.caption("Live network usage")
+    chart_hours = chart_period_selector("public_chart_period")
 
     if not panels:
         st.info("No panels available.")
         return
 
-    render_dashboard(panels, auto_refresh=True, refresh_seconds=30, admin=False)
+    render_dashboard(
+        panels,
+        auto_refresh=True,
+        refresh_seconds=30,
+        admin=False,
+        chart_hours=chart_hours,
+    )
 
 
 if __name__ == "__main__":

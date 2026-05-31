@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -116,20 +117,22 @@ def latest_reading(
 def recent_readings(
     panel: dict[str, Any],
     *,
-    limit: int = 120,
+    hours: int = 6,
+    limit: int = 10000,
     db_path: Path | str = DB_FILE,
 ) -> list[dict[str, Any]]:
     init_db(db_path)
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
     with connect(db_path) as connection:
         rows = connection.execute(
             """
             SELECT checked_at, upload_bps, download_bps
             FROM readings
-            WHERE panel_id = ? AND ok = 1
+            WHERE panel_id = ? AND ok = 1 AND checked_at >= ?
             ORDER BY checked_at DESC, id DESC
             LIMIT ?
             """,
-            (panel_id(panel), limit),
+            (panel_id(panel), since, limit),
         ).fetchall()
 
     return [dict(row) for row in reversed(rows)]

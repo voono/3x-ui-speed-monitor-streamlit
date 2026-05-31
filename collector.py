@@ -68,12 +68,9 @@ class PanelSession:
             self.client = None
             self.logged_in = False
 
-    def ensure_client(self, *, force_login: bool = False) -> ThreeXUIClient:
+    def ensure_client(self) -> ThreeXUIClient:
         if self.client is None:
             self.client = build_client(self.config)
-            self.logged_in = False
-
-        if force_login:
             self.logged_in = False
 
         if not self.logged_in:
@@ -82,6 +79,10 @@ class PanelSession:
 
         return self.client
 
+    def reset_client(self) -> None:
+        self.client = None
+        self.logged_in = False
+
     def collect(self) -> dict[str, Any]:
         sample_seconds = float(self.config.get("sample_seconds", 2.0))
 
@@ -89,7 +90,8 @@ class PanelSession:
             client = self.ensure_client()
             return get_speed_with_client(client, sample_seconds=sample_seconds)
         except ThreeXUIAuthError:
-            client = self.ensure_client(force_login=True)
+            self.reset_client()
+            client = self.ensure_client()
             return get_speed_with_client(client, sample_seconds=sample_seconds)
 
 
