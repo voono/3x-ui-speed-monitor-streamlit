@@ -564,9 +564,25 @@ def render_speed_chart(
             alt.Chart(long_frame)
             .mark_line()
             .encode(
-                x=alt.X("time:T", title=None),
+                x=alt.X(
+                    "time:T",
+                    title="Time",
+                    axis=alt.Axis(
+                        format="%H:%M",
+                        labelAngle=-35,
+                        labelOverlap=False,
+                        labelPadding=8,
+                        titlePadding=12,
+                        tickCount=6,
+                    ),
+                ),
                 y=alt.Y("MiB/s:Q", title="MiB/s"),
                 color=alt.Color("direction:N", title=None),
+                tooltip=[
+                    alt.Tooltip("time:T", title="Time", format="%Y-%m-%d %H:%M:%S"),
+                    alt.Tooltip("direction:N", title="Series"),
+                    alt.Tooltip("MiB/s:Q", title="MiB/s", format=".3f"),
+                ],
             )
         )
 
@@ -579,7 +595,7 @@ def render_speed_chart(
         st.caption(f"High usage line: {threshold_mibps:g} MiB/s")
 
     if chart is not None:
-        st.altair_chart(chart.properties(height=260), use_container_width=True)
+        st.altair_chart(chart.properties(height=300), use_container_width=True)
 
 
 def render_panel_card(
